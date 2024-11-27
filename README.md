@@ -26,7 +26,7 @@
 - [🏁 Getting Started ](#-getting-started-)
   - [Prerequisites](#prerequisites)
   - [Installing](#installing)
-- [🚀 Deploying your own bot ](#-deploying-your-own-bot-)
+- [🚀 Deploying on your own ](#-deploying-on-your-own-)
 - [⛏️ Built Using ](#️-built-using-)
 - [✍️ Authors ](#️-authors-)
 - [🎉 Acknowledgements ](#-acknowledgements-)
@@ -86,9 +86,11 @@ until finished
 
 End with an example of getting some data out of the system or using it for a little demo. -->
 
-## 🚀 Deploying your own bot <a name = "deployment"></a>
+## 🚀 Deploying on your own <a name = "deployment"></a>
 
-TODO: Add deployment instructions
+```
+docker compose up --build --remove-orphans --watch
+```
 
 ## ⛏️ Built Using <a name = "built_using"></a>
 
