@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package minion;
+
+service MinionService {
+    rpc put (PutRequest) returns (Empty);
+    rpc get (GetRequest) returns (GetResponse);
+    rpc deleteBlock (DeleteRequest) returns (DeleteResponse);
+    rpc forward (ForwardRequest) returns (Empty);
+}
+
+message PutRequest {
+    string block_uuid = 1;
+    string data = 2;
+    repeated Minion minions = 3;
+}
+
+message GetRequest {
+    string block_uuid = 1;
+}
+
+message GetResponse {
+    string data = 1;
+}
+
+message DeleteRequest {
+    string block_uuid = 1;
+}
+
+message DeleteResponse {
+    bool success = 1;
+}
+
+message ForwardRequest {
+    string block_uuid = 1;
+    string data = 2;
+    repeated Minion minions = 3;
+}
+
+message Minion {
+    string host = 1;
+    int32 port = 2;
+}
+
+message Empty {}

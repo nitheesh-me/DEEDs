@@ -1,0 +1,112 @@
+services:
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: backup
+    environment:
+      - DEEDS_BACKUP_LOCATION=/app/tmp/deeds.backup
+    command: make control-backup
+    # volumes:
+    #   - control-backup:/home/deeds.backup
+    # ports:
+    #   - "50051:50051"
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: control
+    # environment:
+    #   - DEEDS_BACKUP_LOCATION=/home/deeds.backup
+    command: make control
+    # ports:
+    #   - "50051:50051"
+    depends_on:
+      - backup
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src/servers/control_node
+          target: /app/src/servers/control_node
+
+
+  storage1:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: storage1
+    # environment:
+    #   - DEEDS_BACKUP_LOCATION=/home/deeds.backup
+    command: make storage
+    # ports:
+    #   - "50051:50051"
+    depends_on:
+      - control
+
+  storage2:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: storage2
+    # environment:
+    #   - DEEDS_BACKUP_LOCATION=/home/deeds.backup
+    command: make storage
+    # ports:
+    #   - "50051:50051"
+    depends_on:
+      - control
+
+  storage3:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: storage3
+    # environment:
+    #   - DEEDS_BACKUP_LOCATION=/home/deeds.backup
+    command: make storage
+    # ports:
+    #   - "50051:50051"
+    depends_on:
+      - control
+
+  # storage_node1:
+  #   build: .
+  #   container_name: storage_node1
+  #   environment:
+  #     - ENV_VAR=storage_node1_value
+  #   command: make storage_node1_target
+
+  # storage_node2:
+  #   build: .
+  #   container_name: storage_node2
+  #   environment:
+  #     - ENV_VAR=storage_node2_value
+  #   command: make storage_node2_target
+
+  client:
+    # with --cap-add SYS_ADMIN
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: client
+    tty: true
+    devices:
+      - /dev/fuse:/dev/fuse
+    # security_opt:
+    #   - seccomp=unconfined
+    cap_add:
+      - SYS_ADMIN  # Add necessary capabilities for FUSE
+    #   - MKNOD      # For creating special files like /dev/fuse
+    environment:
+      - DEEDS_MASTER_ADDRESS=control:50051
+    command: make client-connect
+    depends_on:
+      - control
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+
+volumes:
+  control-backup:

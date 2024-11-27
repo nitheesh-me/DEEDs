@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package backup;
+
+service BackUpService {
+    rpc getFileTable (Empty) returns (FileTable);
+    rpc updateFileTable (FileTable) returns (Empty);
+}
+
+message FileTable {
+    string file_table_json = 1;  // Stores the file table as a JSON string
+}
+
+message Empty {}  // Represents an empty message, used for requests without parameters
