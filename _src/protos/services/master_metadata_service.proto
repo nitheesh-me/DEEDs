@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package deeds.services;
+
+import "metadata.proto";
+import "google/protobuf/empty.proto";
+
+service MasterMetadataService {
+    rpc OpenFile(OpenFileRequest) returns (OpenFileResponse) {}
+    rpc DeleteFile(DeleteFileRequest) returns (google.protobuf.Empty) {}
+
+    // TODO: snapshot operations
+}
+
+message OpenFileRequest {
+    string filename = 1;
+    uint32 chunk_index = 2;
+
+    // Open modes
+    enum OpenMode {
+        UNKNOWN = 0;
+        READ = 1;
+        WRITE = 2;
+        CREATE = 3;
+        APPEND = 4;
+    }
+    OpenMode mode = 3;
+    bool create_if_not_exists = 4;
+}
+
+message OpenFileResponse {
+    OpenFileRequest request = 1;
+    deeds.FileChunkMetadata metadata = 2;
+}
+
+message DeleteFileRequest {
+    string filename = 1;
+}

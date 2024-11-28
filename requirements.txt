@@ -3,3 +3,4 @@ grpcio-tools
 pytest
 icecream
 click
+redis

@@ -21,6 +21,7 @@ if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
     logger.info(f"Created data directory at {DATA_DIR}")
 
+
 class MinionService(minion_pb2_grpc.MinionServiceServicer):
     class Chunks:
         blocks = {}
@@ -56,12 +57,22 @@ class MinionService(minion_pb2_grpc.MinionServiceServicer):
                 stub.put(minion_pb2.PutRequest(block_uuid=block_uuid, data=data, minions=[minion_pb2.Minion(host=h, port=p) for h, p in minions]))
             logger.info(f"Forwarded block {block_uuid} to {host}:{port}")
 
+        def _secure_delete(self, path, passes=1):
+            with open(path, "ba+") as delfile:
+                length = delfile.tell()
+            with open(path, "br+") as delfile:
+                for i in range(passes):
+                    delfile.seek(0)
+                    delfile.write(os.urandom(length))
+            os.remove(path)
+
         def delete_block(self, block_uuid):
             block_addr = os.path.join(DATA_DIR, str(block_uuid))
             if not os.path.isfile(block_addr):
                 logger.warning(f"Attempted to delete non-existent block {block_uuid} at {block_addr}")
                 return minion_pb2.DeleteResponse(success=False)
-            os.remove(block_addr)
+            # os.remove(block_addr)
+            self._secure_delete(block_addr)
             logger.info(f"Deleted block {block_uuid} from {block_addr}")
             return minion_pb2.DeleteResponse(success=True)
 

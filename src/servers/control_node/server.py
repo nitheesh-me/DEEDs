@@ -18,6 +18,10 @@ import master_pb2_grpc
 import backup_master_pb2
 import backup_master_pb2_grpc
 
+import minion_pb2
+import minion_pb2_grpc
+import redis
+
 
 class SetEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -30,6 +34,7 @@ class SetEncoder(json.JSONEncoder):
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DEEDS_BACKUP_ADDR = os.environ.get("DEEDS_BACKUP_ADDR", "backup:50051")
+TTL = 30
 
 # Handle graceful shutdown
 def int_handler(signal, frame):
@@ -53,6 +58,8 @@ def set_conf():
         logging.error("Error reading configuration file: %s", e)
         sys.exit(1)
     MasterService.Master.block_size = int(conf.get('master', 'block_size'))
+    global TTL
+    TTL = int(conf.get('master', 'ttl') or TTL)
     minions = conf.get('master', 'chunkServers').split(',')
 
     for m in minions:
@@ -68,8 +75,65 @@ def set_conf():
         logging.error("Primary backup Server not found: %s", e)
         logging.error("Start the primary_backup_server")
 
+
+class FileExpireHandler:
+    def __init__(self):
+        self.redis_conn = redis.Redis(host='redis', port=6379, db=0)
+        self.pubsub = self.redis_conn.pubsub()
+        self.pubsub.psubscribe(**{"__keyevent@0__:expired": self.event_handler})
+        self.pubsub.run_in_thread(sleep_time=0.01)
+
+    def event_handler(self, message):
+        logging.info(f"Received message: {message}")
+        try:
+            key = message["data"].decode("utf-8")
+            logging.info(f"Received message: {message}")
+            if key in MasterService.Master.file_table:
+                MasterService.Master.delete(key)
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+
+    def add_key(self, key, ttl):
+        self.redis_conn.setex(key, ttl, 1)
+
+    def remove_key(self, key):
+        self.redis_conn.delete(key)
+
+    def reset_expire(self, key, ttl):
+        if self.redis_conn.exists(key):
+            if ttl == 0:
+                self.redis_conn.delete(key)
+            if ttl < 0:
+                self.redis_conn.persist(key)
+            self.redis_conn.expire(key, ttl)
+
+
+class ChunkManager:
+    def _get_minion_stub(self, host, port=None):
+        if port is None:
+            channel = grpc.insecure_channel(host)
+        else:
+            channel = grpc.insecure_channel(f"{host}:{port}")
+        # wait for the channel to be ready with timeout of 10 seconds
+        try:
+            grpc.channel_ready_future(channel).result(timeout=10)
+        except grpc.FutureTimeoutError:
+            raise Exception("Connection to Minion timed out")
+        return minion_pb2_grpc.MinionServiceStub(channel)
+
+    def delete_chunk(self, deletion_blocks):
+        logging.info(f"Deleting blocks: {deletion_blocks}")
+        for (block_uuid, node_id, block_index) in deletion_blocks:
+            minion = MasterService.Master.minions[node_id]
+            minion_stub = self._get_minion_stub(minion)
+            delete_request = minion_pb2.DeleteRequest(block_uuid=block_uuid)
+            delete_response = minion_stub.deleteBlock(delete_request)
+            logging.info(f"Delete response: {delete_response}")
+
+
 # Implement the MasterService class
 class MasterService(master_pb2_grpc.MasterServiceServicer):
+    expire_handler = FileExpireHandler()
     class Master:
         file_attributes = {}
         file_table = {}
@@ -125,6 +189,7 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
             # add the directory to the parent directory
             if not dest == "/":
                 MasterService.Master.file_attributes[os.path.dirname(dest)]["folders"].add(os.path.basename(dest))
+                MasterService.expire_handler.add_key(dest, TTL)
             parent_dir = dest
             while parent_dir != "/":
                 parent_dir = os.path.dirname(dest)
@@ -153,6 +218,12 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
                 "st_ino": 0,
                 "st_dev": 0,
             }
+            MasterService.expire_handler.add_key(fname, TTL)
+            MasterService.Master._link_add(fname)
+
+
+        @staticmethod
+        def _link_add(fname):
             # add the file to the parent directory
             parent_dir = os.path.dirname(fname)
             MasterService.Master.file_attributes[parent_dir]["files"].add(os.path.basename(fname))
@@ -162,13 +233,51 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
                 parent_dir = os.path.dirname(fname)
                 MasterService.Master.file_attributes[parent_dir]["st_nlink"] += 1
                 fname = parent_dir
+                MasterService.expire_handler.reset_expire(parent_dir, TTL)
             return orig_
+
+        @staticmethod
+        def _link_delete(fname):
+            parent_dir = os.path.dirname(fname)
+            MasterService.expire_handler.remove_key(fname)
+            MasterService.Master.file_attributes[parent_dir]["st_nlink"] -= 1
+            logging.info(f"Parent dir: {parent_dir}")
+            logging.info(f"File attributes: {MasterService.Master.file_attributes[parent_dir]}")
+            if os.path.basename(fname) in MasterService.Master.file_attributes[parent_dir]["files"]:
+                MasterService.Master.file_attributes[parent_dir]["files"].remove(os.path.basename(fname))
+            else:
+                MasterService.Master.file_attributes[parent_dir]["folders"].remove(os.path.basename(fname))
+            if MasterService.Master.file_attributes[parent_dir]["st_nlink"] == 0 and parent_dir != "/":
+                MasterService.Master.delete(parent_dir)
+                MasterService.Master._link_delete(parent_dir)
 
         @staticmethod
         def delete(fname):
             if fname not in MasterService.Master.file_table:
                 return None
+
+            # Delete the chunk
+            if fname in MasterService.Master.file_table:
+                deletion_blocks = MasterService.Master.file_table[fname]
+                ChunkManager().delete_chunk(deletion_blocks)
+            if MasterService.Master.file_attributes[fname]["st_mode"] == stat.S_IFDIR:
+                for file in MasterService.Master.file_attributes[fname]["files"]:
+                    MasterService.Master.delete(os.path.join(fname, file))
+                for folder in MasterService.Master.file_attributes[fname]["folders"]:
+                    MasterService.Master.delete(os.path.join(fname, folder))
+            MasterService.Master._link_delete(fname)
+            MasterService.Master.file_attributes.pop(fname)
             return MasterService.Master.file_table.pop(fname, None)
+
+        @staticmethod
+        def rename(src, dest):
+            if src not in MasterService.Master.file_table:
+                return None
+            MasterService.Master.file_table[dest] = MasterService.Master.file_table.pop(src)
+            MasterService.Master.file_attributes[dest] = MasterService.Master.file_attributes.pop(src)
+            MasterService.Master._link_add(dest)
+            MasterService.Master._link_delete(src)
+            return dest
 
         @staticmethod
         def getFileTableEntry(fname):
@@ -184,7 +293,7 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
                 return []
             folders = MasterService.Master.file_attributes[path]["folders"]
             files = MasterService.Master.file_attributes[path]["files"]
-            return list(folders.union(files))
+            return list(folders) + list(files)
 
         @staticmethod
         def getBlockSize():
@@ -198,16 +307,28 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
         def calc_num_blocks(size):
             return int(math.ceil(float(size) / MasterService.Master.block_size))
 
+
         @staticmethod
         def alloc_blocks(dest, num, size=0):
-            blocks = []
-            for i in range(num):
+            blocks = MasterService.Master.file_table[dest]
+            _blocks = [
+                master_pb2.Block(block_uuid=block_uuid, node_id=nodes_id, block_index=block_index)
+                for (block_uuid, nodes_id, block_index) in blocks
+            ]
+            for i in range(len(blocks), num):
                 block_uuid = str(uuid.uuid1())
                 nodes_id = random.choice(list(MasterService.Master.minions.keys()))
-                blocks.append(master_pb2.Block(block_uuid=block_uuid, node_id=nodes_id, block_index=i))
+                _blocks.append(master_pb2.Block(block_uuid=block_uuid, node_id=nodes_id, block_index=i))
 
                 MasterService.Master.file_table[dest].append((block_uuid, nodes_id, i))
-            return blocks
+            # Remove extra blocks if file size is reduced
+            deletion_blocks = []
+            if num < len(blocks):
+                for i in range(num, len(blocks)):
+                    block_uuid, nodes_id, block_index = MasterService.Master.file_table[dest].pop()
+                    deletion_blocks.append(_blocks.pop())
+                    ChunkManager().delete_chunk(deletion_blocks)
+            return _blocks
 
     def __init__(self):
         """Adds root directory to the file table"""
@@ -217,18 +338,42 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
             logging.info("Root directory created")
 
     # Implement the gRPC service methods
+    def statfs(self, request, context):
+        total_blocks = sum([len(x) for x in MasterService.Master.file_table.values()])
+        free_blocks = 10*3 - total_blocks
+        block_size = MasterService.Master.block_size
+        total_files = sum([len(x.get("files", [])) for x in MasterService.Master.file_attributes.values()])
+        free_files = 10 - total_files
+        return master_pb2.StatfsResponse(
+            total_blocks=total_blocks,
+            free_blocks=free_blocks,
+            block_size=block_size,
+            total_files=total_files,
+            free_files=free_files,
+        )
+
     def read(self, request, context):
         mapping = MasterService.Master.read(request.fname)
         mapping_blocks = list(map(lambda x: master_pb2.Block(block_uuid=x[0], node_id=x[1], block_index=x[2]), mapping))
         return master_pb2.FileMapping(blocks=mapping_blocks)
 
     def create(self, request, context):
-        dest = MasterService.Master.create(request.fname, request.mode)
-        return dest
+        dest = MasterService.Master.create(request.path, request.mode)
+        return master_pb2.Location(path=dest)
 
     def mkdir(self, request, context):
         dest = MasterService.Master.mkdir(request.path, request.mode)
         return master_pb2.Location(path=dest)
+
+    def rename(self, request, context):
+        src = request.src
+        dest = request.dest
+        if src not in MasterService.Master.file_table:
+            return master_pb2.Empty()
+        MasterService.Master.file_table[dest] = MasterService.Master.file_table.pop(src)
+        MasterService.Master.file_attributes[dest] = MasterService.Master.file_attributes.pop(src)
+        MasterService.Master.file_attributes[os.path.dirname(dest)]["files"].add(os.path.basename(dest))
+        return master_pb2.Empty()
 
     def write(self, request, context):
         blocks = MasterService.Master.write(request.dest, request.size)
@@ -257,7 +402,7 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
         )
 
     def getListOfFiles(self, request, context):
-        file_list = MasterService.Master.getListOfFiles()
+        file_list = MasterService.Master.getListOfFiles(request.path)
         return master_pb2.FileList(files=file_list)
 
     def getBlockSize(self, request, context):
@@ -268,6 +413,10 @@ class MasterService(master_pb2_grpc.MasterServiceServicer):
         minions = MasterService.Master.getMinions()
         logging.info(f"Minions: {minions}")
         return master_pb2.MinionList(minions=minions)
+
+    def setExpireTime(self, request, context):
+        MasterService.expire_handler.reset_expire(request.fname, request.ttl)
+        return master_pb2.Empty()
 
 
 def serve(address):

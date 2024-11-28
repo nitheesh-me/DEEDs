@@ -11,6 +11,7 @@ from fuse import FUSE, Operations, FuseOSError, fuse_exit, LoggingMixIn
 from .deedsclient import DeedsClient
 
 
+
 def logger_d(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -96,8 +97,8 @@ class DEEDSFS(LoggingMixIn, Operations):
         if not self.client:
             self.init(path)
         try:
-            # yield from self.client.readdir(path, fh)
-            yield from [".", "..", "test.txt"]
+            yield from self.client.readdir(path, fh)
+            # yield from [".", "..", "test.txt"]
         except Exception as e:
             print(e)
             raise FuseOSError(errno.ENOENT)
@@ -136,8 +137,117 @@ class DEEDSFS(LoggingMixIn, Operations):
             traceback.print_exc()
             raise FuseOSError(errno.ENOENT)
 
+    def unlink(self, path):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            response = self.client.unlink(path)
+            if response:
+                return 0
+            else:
+                return -1
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def rmdir(self, path):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            response = self.client.rmdir(path)
+            if response:
+                return 0
+            else:
+                return -1
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def rename(self, old, new):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(old)
+        try:
+            response = self.client.rename(old, new)
+            if response:
+                return 0
+            else:
+                return -1
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def open(self, path, flags):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            return 0
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def read(self, path, size, offset, fh):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            r_content = self.client.read(path, size, offset, fh)
+            return r_content
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def write(self, path, data, offset, fh):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            return self.client.write(path, data, offset, fh)
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def truncate(self, path, length, fh=None):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            return self.client.truncate(path, length, fh)
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
+    def release(self, path, fh):
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            return self.client.release(path, fh)
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
+
     def statfs(self, path):
-        raise NotImplementedError
+        if not self.has_mounted or not self.client:
+            raise fuse.FuseOSError(errno.ENOENT)
+        if not self.client:
+            self.init(path)
+        try:
+            return self.client.statfs(path)
+        except Exception as e:
+            print(e)
+            raise FuseOSError(errno.ENOENT)
 
 
 
@@ -151,4 +261,15 @@ touch test.txt
 
 ls .
 > access, getattr
+
+touch test2.txt
+mkdir testdir
+
+ls testdir
+
+df -hT /mnt/deeds/
+
+cp test.txt testdir/
+
+echo "Hello, DEEDSFS!" > test.txt
 """

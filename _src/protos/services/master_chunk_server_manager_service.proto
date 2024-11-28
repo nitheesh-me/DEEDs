@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package deeds.services;
+
+import "client.proto";
+import "metadata.proto";
+
+service MasterChunkServerManagerService {
+    rpc ReportChunkServer(ReportChunkServerRequest) returns (ReportChunkServerResponse) {}
+}
+
+message ReportChunkServerRequest {
+    deeds.ChunkServer chunk_server = 1;
+    repeated deeds.FileChunkMetadata stored_chunks = 2;
+}
+
+message ReportChunkServerResponse {
+    // The chunk handles that the master wants
+    // the chunk server to delete.
+    ReportChunkServerRequest request = 1;
+
+    repeated string stale_chunk_handles = 2;
+}

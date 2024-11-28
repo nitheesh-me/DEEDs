@@ -26,16 +26,23 @@ class DeedsClient:
         self.channel = grpc.insecure_channel(address)
         self.master_stub = master_pb2_grpc.MasterServiceStub(self.channel)
         self.test()
+        self.fdid = 0
+        self.fd_map = {}
 
     def _get_minion_stub(self, host, port=None):
         if port is None:
             channel = grpc.insecure_channel(host)
         else:
             channel = grpc.insecure_channel(f"{host}:{port}")
+        # wait for the channel to be ready with timeout of 10 seconds
+        try:
+            grpc.channel_ready_future(channel).result(timeout=10)
+        except grpc.FutureTimeoutError:
+            raise Exception("Connection to Minion timed out")
         return minion_pb2_grpc.MinionServiceStub(channel)
 
-    def _list_files(self):
-        yield from self.master_stub.getListOfFiles(master_pb2.Location(path="/")).files
+    def _list_files(self, path="/"):
+        yield from self.master_stub.getListOfFiles(master_pb2.Location(path=path)).files
 
     def create(self, fname, mode):
         request = master_pb2.Location(path=str(fname), mode=mode)
@@ -60,20 +67,82 @@ class DeedsClient:
         ...     # TODO
 
     def rename(self, old, new):
-        ...     # TODO
+        request = master_pb2.RenameRequest(src=str(old), dest=str(new))
+        response = self.master_stub.rename(request)
+        return response
 
     def open(self, fname, flags):
-        ...     # TODO
+        """ What is this?: Open a file, meaning create a file handle, in our case, a file table entry """
+        file_details = master_pb2.OpenRequest(fname=fname, flags=flags)
+        response = self.master_stub.open(file_details)
+        self.fdid += 1
+        self.fd_map[self.fdid] = response
+        print(f"Opened file {fname} with file handle {self.fdid}")
+        return self.fdid
 
     def read(self, path, size, offset, fh):
-        ...     # TODO
+        """Stream the output from chunks, considering offset and size"""
+        read_request = master_pb2.ReadRequest(fname=path)
+        read_response = self.master_stub.read(read_request)
+        block_size = self.master_stub.getBlockSize(master_pb2.Empty()).size
+        bytes_read = 0
+
+        for block in sorted(read_response.blocks, key=lambda x: x.block_index):
+            if offset >= block_size:
+                offset -= block_size
+                continue
+
+            minion = NODE_MAP[block.node_id]
+            minion_stub = self._get_minion_stub(minion)
+            get_request = minion_pb2.GetRequest(block_uuid=block.block_uuid)
+            get_response = minion_stub.get(get_request)
+            data = get_response.data[offset:]
+            offset = 0
+
+            while data:
+                chunk = data[:size - bytes_read]
+                yield chunk
+                bytes_read += len(chunk)
+                if bytes_read >= size:
+                    return
+                data = data[len(chunk):]
 
     def write(self, path, data, offset, fh):
-        ...     # TODO
+        block_size = self.master_stub.getBlockSize(master_pb2.Empty()).size
+        total_file_size = offset + len(data)
+        write_request = master_pb2.WriteRequest(fname=path, size=total_file_size)
+        write_response = self.master_stub.write(write_request)
+        bytes_written = 0
+
+        for block in sorted(write_response.blocks, key=lambda x: x.block_index):
+            if offset >= block_size:
+                offset -= block_size
+                continue
+
+            minion = NODE_MAP[block.node_id]
+            minion_stub = self._get_minion_stub(minion)
+            put_request = minion_pb2.PutRequest(block_uuid=block.block_uuid, data=data[:block_size - offset])
+            put_response = minion_stub.put(put_request)
+            data = data[len(put_request.data):]
+            bytes_written += len(put_request.data)
+            offset = 0
+
+        return bytes_written
+
+    def flush(self, path, fh):
+        # Assuming flush is to ensure all data is written to the storage
+        if fh not in self.fd_map:
+            raise Exception("Invalid file handle")
+
+        file_entry = self.fd_map[fh]
+        # Perform any necessary operations to flush data to storage
+        # This is a placeholder for actual flush logic
+        print(f"Flushing file {path} with file handle {fh}")
+        return 0
 
     def readdir(self, path, fh):
         yield from [".", ".."]
-        yield from self._list_files()
+        yield from self._list_files(path)
 
     def mkdir(self, path, mode):
         request = master_pb2.Location(path=str(path), mode=mode)
@@ -81,21 +150,32 @@ class DeedsClient:
         return response
 
     def rmdir(self, path):
-        ...     # TODO
+        request = master_pb2.DeleteRequest(fname=str(path))
+        response = self.master_stub.delete(request)
+        return response
 
     def truncate(self, fname, length, fh=None):
         ...     # TODO
 
     def unlink(self, fname):
-        ...     # TODO
+        request = master_pb2.DeleteRequest(fname=str(fname))
+        response = self.master_stub.delete(request)
+        return response
 
     def release(self, fname, fh):
-        ...     # TODO
+        print(f"Releasing file {fname} with file handle {fh}")
+        del self.fd_map[fh]
+        return 0
 
     def statfs(self, path):
-        ...     # TODO
+        request = master_pb2.Empty()
+        response = self.master_stub.statfs(request)
+        return dict(f_bsize=response.block_size, f_blocks=response.total_blocks, f_bavail=response.free_blocks)
 
-
+    def reset_expire(self, path, ttl):
+        request = master_pb2.Location(path=path, ttl=ttl)
+        response = self.master_stub.setExpireTime(request)
+        return response
 
     def test(self):
         channel = grpc.insecure_channel(target=self.address)

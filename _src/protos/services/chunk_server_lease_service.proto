@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package deeds.services;
+
+import "google/protobuf/timestamp.proto";
+
+service ChunkServerLeaseService {
+    rpc GrantLease(GrantLeaseRequest) returns (GrantLeaseResponse) {}
+    rpc RevokeLease(RevokeLeaseRequest) returns (RevokeLeaseResponse) {}
+}
+
+message GrantLeaseRequest {
+    // The chunk handle that the lease is being granted for.
+    string chunk_handle = 1;
+
+    // version
+    uint32 version = 2;
+
+    // (in seconds)
+    google.protobuf.Timestamp lease_expiration_time = 3;
+}
+
+message GrantLeaseResponse {
+    GrantLeaseRequest request = 1;
+
+    enum GrantLeaseStatus {
+        UNKNOWN = 0;
+        ACCEPTED = 1;
+        IGNORED_EXPIRED_LEASE = 2;
+        REJECTED_NOT_FOUND = 3;
+        REJECTED_STALE_VERSION = 4;
+    }
+    GrantLeaseStatus status = 2;
+}
+
+message RevokeLeaseRequest {
+    // The chunk handle that the lease is being revoked for.
+    string chunk_handle = 1;
+    google.protobuf.Timestamp original_lease_expiration_time = 2;
+}
+
+message RevokeLeaseResponse {
+    RevokeLeaseRequest request = 1;
+
+    enum RevokeLeaseStatus {
+        UNKNOWN = 0;
+        REVOKED = 1;
+        IGNORED_HAS_NEWER_LEASE = 2;
+        REJECTED_NOT_FOUND = 3;
+    }
+    RevokeLeaseStatus status = 2;
+}

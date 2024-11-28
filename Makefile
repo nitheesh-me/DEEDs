@@ -29,3 +29,6 @@ storage:
 client-connect:
 	mkdir -p /mnt/deeds
 	PYTHONPATH=./src python -m deedsclient setup --mountpoint /mnt/deeds
+
+expire:
+	PYTHONPATH=./src python -m deedsclient expire

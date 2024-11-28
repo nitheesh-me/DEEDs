@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package deeds.services;
+
+import "commons.proto";
+
+service ChunkServerFileService {
+    rpc InitFileChunk(InitFileChunkRequest) returns (InitFileChunkResponse) {}
+    rpc ReadFileChunk(ReadFileChunkRequest) returns (ReadFileChunkResponse) {}
+    rpc AdvanceFileChunkVersion(AdvanceFileChunkVersionRequest) returns (AdvanceFileChunkVersionResponse) {}
+    rpc SendChunkData(SendChunkDataRequest) returns (SendChunkDataResponse) {}
+    rpc WriteFileChunk(WriteFileChunkRequest) returns (WriteFileChunkResponse) {}
+    rpc ApplyMutations(ApplyMutationsRequest) returns (ApplyMutationsResponse) {}
+
+    // TODO: add support for the master to ask chunk server to copy file
+    // from other chunk servers for min file replica count maintenance
+
+    // TODO: support for snapshot and append operations
+}
+
+message InitFileChunkRequest {
+    string chunk_handle = 1;
+}
+
+message InitFileChunkResponse {
+    InitFileChunkRequest request = 1;
+
+    enum InitFileChunkStatus {
+        UNKNOWN = 0;
+        CREATED = 1;
+        REJECTED_ALREADY_EXISTS = 2;
+    }
+    InitFileChunkStatus status = 2;
+}
+
+message ReadFileChunkRequest {
+    string chunk_handle = 1;
+    uint32 chunk_version = 2;
+    uint32 offset_start = 3;
+    uint32 length = 4;
+}
+
+message ReadFileChunkResponse {
+    ReadFileChunkRequest request = 1;
+
+    enum ReadFileChunkStatus {
+        UNKNOWN = 0;
+        SUCCESS = 1;
+        REJECTED_NOT_FOUND = 2;
+        REJECTED_STALE_VERSION = 3;
+        REJECTED_OUT_OF_RANGE = 4;
+    }
+    ReadFileChunkStatus status = 2;
+    bytes data = 3;
+    uint32 bytes_read = 4;
+}
+
+message AdvanceFileChunkVersionRequest {
+    string chunk_handle = 1;
+    uint32 new_current_version = 2;
+}
+
+message AdvanceFileChunkVersionResponse {
+    AdvanceFileChunkVersionRequest request = 1;
+
+    enum AdvanceFileChunkVersionStatus {
+        UNKNOWN = 0;
+        SUCCESS = 1;
+        REJECTED_NOT_FOUND = 2;
+        REJECTED_STALE_VERSION = 3;
+    }
+    AdvanceFileChunkVersionStatus status = 2;
+    uint32 chunk_version = 3;
+}
+
+message SendChunkDataRequest {
+    bytes data = 1;
+    bytes checksum = 2;
+}
+
+message SendChunkDataResponse {
+    SendChunkDataRequest request = 1;
+
+    enum SendChunkDataRequestStatus {
+        UNKNOWN = 0;
+        SUCCESS = 1;
+        RATE_LIMITED = 2;
+        DATA_TOO_LARGE = 3;
+        BAD_DATA = 4;
+        FAILED = 5;
+    }
+    SendChunkDataRequestStatus status = 2;
+}
+
+message WriteFileChunkRequestHeader {
+    string chunk_handle = 1;
+    uint32 chunk_version = 2;
+    uint32 offset_start = 3;
+    uint32 length = 4;
+    bytes data_checksum = 5;
+}
+
+enum FileChunkMutationStatus {
+    UNKNOWN = 0;
+    SUCCESS = 1;
+    REJECTED_DATA_NOT_FOUND = 2;
+    REJECTED_CHUNK_NOT_FOUND = 3;
+    REJECTED_STALE_VERSION = 4;
+    REJECTED_NOT_LEASE_HOLDER = 5;
+    REJECTED_OUT_OF_RANGE = 6;
+}
+
+message WriteFileChunkRequest {
+    WriteFileChunkRequestHeader header = 1;
+    repeated deeds.ChunkServerLocation replica_locations = 2;
+}
+
+message WriteFileChunkResponse {
+    WriteFileChunkRequest request = 1;
+    uint32 bytes_written = 2;
+    FileChunkMutationStatus status = 3;
+
+    message ReplicaStatus {
+        deeds.ChunkServerLocation location = 1;
+        FileChunkMutationStatus status = 2;
+    }
+    repeated ReplicaStatus replica_statuses = 4;
+}
+
+message ApplyMutationsRequest {
+    repeated WriteFileChunkRequest mutations = 1;
+}
+
+message ApplyMutationsResponse {
+    ApplyMutationsRequest request = 1;
+    FileChunkMutationStatus status = 2;
+}

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package deeds.services;
+
+service ChunkServerControlService {
+    rpc CheckHeartBeat(CheckHeartBeatRequest) returns (CheckHeartBeatResponse) {}
+    rpc TriggerReportChunkServer(TriggerReportChunkServerRequest) returns (TriggerReportChunkServerResponse) {}
+}
+
+// TODO: Anything else?
+message CheckHeartBeatRequest {}
+
+message CheckHeartBeatResponse {
+    CheckHeartBeatRequest request = 1;
+}
+
+message TriggerReportChunkServerRequest {}
+
+message TriggerReportChunkServerResponse {
+    TriggerReportChunkServerRequest request = 1;
+}

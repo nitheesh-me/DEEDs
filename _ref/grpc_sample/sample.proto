@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package sample;
+
+
+service SampleService {
+  rpc GetSample (SampleRequest) returns (SampleResponse) {}
+  rpc GetSampleStream (SampleRequest) returns (stream SampleResponse) {}
+  rpc GetSampleStreamBidirectional (stream SampleRequest) returns (stream SampleResponse) {}
+}
+
+message SampleRequest {
+  string id = 1;
+  //   optional count, default 1
+  optional int32 count = 2;
+}
+
+message SampleResponse {
+  string message = 1;
+}

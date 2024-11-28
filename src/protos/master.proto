@@ -3,8 +3,11 @@ syntax = "proto3";
 package master;
 
 service MasterService {
-    rpc create (Location) returns (FileMapping);
-    rpc mkdir (Location) returns (FileMapping);
+    rpc statfs (Empty) returns (StatfsResponse);
+
+    rpc create (Location) returns (Location);
+    rpc mkdir (Location) returns (Location);
+    rpc rename (RenameRequest) returns (Location);
 
     rpc read (ReadRequest) returns (FileMapping);
     rpc write (WriteRequest) returns (BlockList);
@@ -13,12 +16,30 @@ service MasterService {
     rpc getListOfFiles (Location) returns (FileList);
     rpc getBlockSize (Empty) returns (BlockSize);
     rpc getMinions (Empty) returns (MinionList);
+
+    rpc setExpireTime (Location) returns (Empty);
+}
+
+message RenameRequest {
+    string src = 1;
+    string dest = 2;
+}
+
+message StatfsResponse {
+    int32 total_blocks = 1;
+    int32 free_blocks = 2;
+    int32 block_size = 3;
+    int32 total_files = 4;
+    int32 free_files = 5;
 }
 
 message Location {
     string path = 1;
     oneof extras {
         int32 mode = 2;
+    }
+    oneof expire_time {
+        int32 ttl = 3;
     }
 }
 
